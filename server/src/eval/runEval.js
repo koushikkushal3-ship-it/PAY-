@@ -36,6 +36,10 @@ export async function runEval({ onProgress } = {}) {
         recommended_action: verdict.recommended_action,
         reasoning: verdict.reasoning,
         spike_multiple: flag.signal?.spike_multiple ?? null,
+        // Set by the seed on archetypes designed to be genuinely hard. It lives
+        // in the signal but buildRiskCaseInput never copies it, so the model is
+        // not told which cases are the difficult ones.
+        ambiguous: flag.signal?.ambiguous === true,
         naive_predicted: naiveBaseline(flag.signal),
       });
     } catch (err) {
@@ -63,6 +67,11 @@ export async function runEval({ onProgress } = {}) {
     // have different denominators and the comparison means nothing.
     model: metricsFor(scored, 'predicted'),
     naive_volume_rule: metricsFor(scored, 'naive_predicted'),
+    // Split by how hard the case was designed to be. Aggregate accuracy hides
+    // whether the system is confident for the right reasons; a model that is
+    // as sure on an ambiguous case as on an obvious one is badly calibrated,
+    // and on this problem that matters more than the headline number.
+    by_difficulty: difficultySplit(scored),
     results,
   };
 
@@ -76,6 +85,23 @@ export async function runEval({ onProgress } = {}) {
  */
 function naiveBaseline(signal) {
   return Number(signal?.spike_multiple ?? 0) > 5 ? 'genuine_risk' : 'false_positive';
+}
+
+function difficultySplit(rows) {
+  const bucket = (subset) => ({
+    cases: subset.length,
+    correct: subset.filter((r) => r.predicted === r.truth).length,
+    accuracy: subset.length
+      ? r4(subset.filter((r) => r.predicted === r.truth).length / subset.length)
+      : 0,
+    mean_confidence: subset.length
+      ? r4(subset.reduce((s, r) => s + Number(r.confidence ?? 0), 0) / subset.length)
+      : 0,
+  });
+  return {
+    ambiguous: bucket(rows.filter((r) => r.ambiguous)),
+    clear_cut: bucket(rows.filter((r) => !r.ambiguous)),
+  };
 }
 
 function metricsFor(rows, field) {

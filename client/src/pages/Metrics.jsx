@@ -134,6 +134,35 @@ export default function Metrics() {
         </div>
       </Card>
 
+      {d.by_difficulty && (
+        <Card title="Calibration">
+          <p className="mb-3 text-xs text-slate-400">
+            Some archetypes are built to conflict — a legitimate merchant whose chargeback ratio is
+            genuinely above benchmark, and a fraudulent one with clean paperwork and a modest spike.
+            The flag marking them lives in the data but is never passed to the model. Aggregate
+            accuracy hides whether the system is confident for the right reasons.
+          </p>
+          <div className="grid grid-cols-2 gap-4">
+            {[
+              ['Ambiguous by design', d.by_difficulty.ambiguous],
+              ['Clear cut', d.by_difficulty.clear_cut],
+            ].map(([label, b]) => (
+              <div key={label} className="rounded bg-slate-900/60 p-4">
+                <div className="text-xs text-slate-500">{label}</div>
+                <div className="mt-1 text-2xl tabular-nums text-slate-200">
+                  {b.correct}/{b.cases}
+                </div>
+                <div className="text-xs text-slate-500">correct</div>
+                <div className="mt-2 text-sm tabular-nums text-slate-300">
+                  {pct(b.mean_confidence)}
+                </div>
+                <div className="text-xs text-slate-500">mean confidence</div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
       <Card title="Case-by-case">
         <div className="max-h-96 overflow-y-auto">
           <table className="w-full text-xs">

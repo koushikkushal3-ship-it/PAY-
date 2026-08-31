@@ -260,6 +260,49 @@ const falsePositives = [
   },
 ];
 
+// Deliberately ambiguous: a legitimate merchant whose chargeback ratio is
+// genuinely ABOVE benchmark. Every easy tell points the wrong way, and only the
+// direction of travel and the stated cause distinguish it from real risk. This
+// archetype exists so the evaluation has cases that can actually be failed.
+falsePositives.push(function stressedButLegitimate() {
+  const cat = 'travel';
+  const bench = CATEGORIES[cat].benchmark;
+  return {
+    category: cat,
+    merchant: {
+      account_age_days: Math.round(between(600, 1600)),
+      kyc_status: 'verified',
+      doc_completeness: 1.0,
+      baseline_monthly_volume: Math.round(between(1000000, 3200000)),
+    },
+    flag: { flag_type: 'reserve_hold', trigger: 'chargeback_ratio' },
+    signal: (m) => {
+      const spike = round(between(1.4, 2.6), 1);
+      return {
+        spike_multiple: spike,
+        volume_last_30d: Math.round(m.baseline_monthly_volume * spike),
+        z_score: round(between(1.2, 2.4), 1),
+        // Above benchmark — the signal that usually means genuine risk.
+        chargeback_ratio: round(bench * between(1.3, 1.9), 4),
+        category_benchmark: bench,
+        // But falling, not rising: the underlying cause is being fixed.
+        chargeback_trend_3m: 'falling',
+        refund_rate: round(between(0.09, 0.15), 3),
+        refund_rate_prior: round(between(0.1, 0.17), 3),
+        new_buyer_ratio: round(between(0.4, 0.6), 2),
+        top_buyer_share: round(between(0.02, 0.06), 3),
+        distinct_buyers: Math.round(between(2400, 7000)),
+        dispute_count_90d: Math.round(between(30, 70)),
+        dormant_days: 0,
+        cross_border_share: round(between(0.2, 0.45), 2),
+        ambiguous: true,
+        context_note:
+          'Disputes trace to a partner airline cancelling a route in March; the merchant refunded affected bookings directly and dispute volume has fallen each month since. Chargeback ratio remains above the category benchmark but is trending down.',
+      };
+    },
+  };
+});
+
 // ---- GENUINE RISK: the flag is correct ----
 
 const genuineRisks = [
@@ -447,6 +490,50 @@ const genuineRisks = [
 ];
 
 /* ------------------------------------------------------------------ */
+
+// The mirror of stressedButLegitimate: a fraudulent account that has done the
+// paperwork and waited. Nothing screams, and the case has to be made from the
+// combination — refunds climbing, volume concentrating on one new counterparty,
+// cross-border share rising — rather than from any single number.
+genuineRisks.push(function patientFraud() {
+  const cat = pick(['electronics', 'fashion']);
+  const bench = CATEGORIES[cat].benchmark;
+  return {
+    category: cat,
+    merchant: {
+      account_age_days: Math.round(between(380, 800)),
+      kyc_status: 'verified',
+      doc_completeness: 1.0,
+      baseline_monthly_volume: Math.round(between(700000, 2200000)),
+    },
+    flag: { flag_type: 'review', trigger: 'velocity' },
+    signal: (m) => {
+      const spike = round(between(2.2, 3.6), 1);
+      return {
+        spike_multiple: spike,
+        volume_last_30d: Math.round(m.baseline_monthly_volume * spike),
+        z_score: round(between(2.0, 3.4), 1),
+        // Only just above benchmark: not the blowout that gives fraud away.
+        chargeback_ratio: round(bench * between(1.2, 1.7), 4),
+        category_benchmark: bench,
+        chargeback_trend_3m: 'rising',
+        // The tell, and it is quiet: refunds roughly tripled.
+        refund_rate: round(between(0.16, 0.24), 3),
+        refund_rate_prior: round(between(0.04, 0.07), 3),
+        new_buyer_ratio: round(between(0.6, 0.75), 2),
+        // Volume concentrating on one counterparty that has no history.
+        top_buyer_share: round(between(0.38, 0.55), 2),
+        distinct_buyers: Math.round(between(700, 2200)),
+        dispute_count_90d: Math.round(between(8, 22)),
+        dormant_days: 0,
+        cross_border_share: round(between(0.45, 0.75), 2),
+        ambiguous: true,
+        context_note:
+          'Merchant attributes the increase to a new wholesale buyer onboarded last month. That buyer now accounts for most of the volume and has no prior transaction history on the platform.',
+      };
+    },
+  };
+});
 
 function buildCase(kind, index) {
   const factory = kind === 'false_positive'
