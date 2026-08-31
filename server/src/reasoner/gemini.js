@@ -47,10 +47,11 @@ export async function reason({ system, input, schema, temperature = 0.1 }) {
       };
     } catch (err) {
       lastError = err;
-      // 429 / transient 5xx: back off and retry. A hard 400 fails the same way
-      // three times, which is fine — we surface the real message either way.
+      // Free-tier quota is per-minute, so a 429 needs to wait out the window
+      // rather than retry in a couple of seconds. Other errors back off fast.
+      const isQuota = String(err.message).includes('429');
       if (attempt < 3) {
-        await new Promise((r) => setTimeout(r, attempt * 1200));
+        await new Promise((r) => setTimeout(r, isQuota ? attempt * 20000 : attempt * 1200));
       }
     }
   }

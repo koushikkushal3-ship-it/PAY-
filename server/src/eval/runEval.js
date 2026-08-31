@@ -58,8 +58,11 @@ export async function runEval({ onProgress } = {}) {
     holdout_size: flags.length,
     scored: scored.length,
     failed: results.length - scored.length,
+    // Both scored over the SAME rows. A case the model failed to score (quota,
+    // network) is excluded from the baseline too — otherwise the two columns
+    // have different denominators and the comparison means nothing.
     model: metricsFor(scored, 'predicted'),
-    naive_volume_rule: metricsFor(results, 'naive_predicted'),
+    naive_volume_rule: metricsFor(scored, 'naive_predicted'),
     results,
   };
 
