@@ -229,51 +229,63 @@ safegate/
 
 ---
 
-## 11. Three-day build order
+## 11. As built
 
-### Day 1 — Foundation + the AI centerpiece
-- [ ] Supabase project, run `schema.sql`, RLS on every table
-- [ ] `seed.js` — generate merchants/transactions/invoices/settlements/agent_sessions with
-      **deliberately injected** genuine-risk cases, explainable-spike cases, unfair-priced sessions,
-      GST mismatches
-- [ ] Hold out a labeled slice into `eval_labels`, never used in any prompt
-- [ ] Gemini reasoner with structured `responseSchema` (verdict, confidence, reasoning, action)
-- [ ] Risk detector, `review_queue`, `/api/cases/:id/reason` working end to end
-- [ ] Queue + case-detail UI against Module 1 only
+All three days are complete. Deviations from the plan above, and why:
 
-### Day 2 — The other three modules
-- [ ] Recovery detector (false-declines + B2B invoices + stop-rule)
-- [ ] Agent pricing-fairness detector (price-spread stats + Gemini explanation)
-- [ ] Finance detector (reserve forecast + GST bucket check)
-- [ ] All three plugged into the same queue/case/action pipeline
-- [ ] Four tabs live in the console
+| Planned | As built | Why |
+|---|---|---|
+| `case_verdicts` table | `review_queue.verdict` jsonb | The schema already had the column; a join bought nothing |
+| `eval_labels` table | `merchant_flags.ground_truth` + `is_holdout` | Same reason — already modelled, and keeping the label on the flag makes the exclusion rule obvious |
+| Separate detector logic per route | `detectors/index.js` registry | Four modules sharing one interface removed all per-module branching from the routes |
+| Per-module case detail screens | One generic context renderer | The model input is rendered as-is, which is also the evidence that no label is hidden |
+| Supabase Auth login | Not built | Single-analyst internal tool; cut deliberately and stated in the README |
 
-### Day 3 — Evidence, polish, submit
-- [ ] `runEval.js` — replay held-out set, compute agreement/precision/recall/F1
-- [ ] Metrics screen with confusion matrix + charts
-- [ ] Reserve forecast chart, pricing audit chart
-- [ ] README + architecture write-up (with gap sources cited)
-- [ ] Record 5-minute pitch video
-- [ ] Push public repo, submit form **with buffer before the deadline**
+Live counts after `npm run seed` and running every detector:
 
----
+```
+merchants     44        risk           24 cases
+flags         44        recovery       52 cases
+  holdout     20        agent audit     6 cases
+  queue       24        finance        41 cases
+transactions 460
+invoices      74
+settlements   44
+agent quotes  72
+```
 
-## 12. Five-part pitch structure (for the video)
+## 12. Evidence produced
 
-1. **The gap** — Razorpay already has Shield, Recon, and Agent Studio. Here are four things they don't
-   have, with sources.
-2. **The build** — one console, four detectors, one reasoning layer, one audit trail.
-3. **The evidence** — held-out evaluation numbers on screen, not a cherry-picked demo.
-4. **The walkthrough** — one real case released in each of the four queues.
-5. **The honesty** — what's synthetic and why, what the LLM gets wrong, what I'd build next.
+From `server/eval-results.json`, 20 holdout cases, positive class `genuine_risk`:
 
----
+| | Accuracy | Precision | Recall | F1 |
+|---|---|---|---|---|
+| Gemini reasoner | 100% | 100% | 100% | 100% |
+| Naive volume rule | 60% | 62.5% | 50% | 55.6% |
+
+Both scored over the identical cases. The headline: of ten flagged merchants who
+were actually legitimate, the reasoner cleared **all ten**; the volume rule left
+**three wrongly frozen**.
+
+Calibration split, which is the more informative number:
+
+| Case type | Correct | Mean confidence |
+|---|---|---|
+| Ambiguous by design | 4/4 | 88.0% |
+| Clear cut | 16/16 | 95.6% |
+
+Confidence falls where the evidence conflicts. That is the property worth
+having, since those are the cases that should reach a human.
+
+**No failure cases exist at this holdout size.** That is stated as a limit of
+the dataset, not presented as robustness.
 
 ## 13. Submission checklist
 
-- [ ] Public GitHub repository
-- [ ] 5-minute pitch video
-- [ ] Short architecture write-up
-- [ ] Track selected: **Open Track**
-- [ ] Project name, objectives, GitHub URL, pitch, challenges faced — form fields ready
-- [ ] Individual submission (own code, own build, defensible in the panel round)
+- [x] Working code, four modules, verified in the browser
+- [x] Evidence with a baseline comparison, not a cherry-picked demo
+- [x] Architecture write-up (this file) and README
+- [x] Pitch script (`PITCH.md`)
+- [ ] Public GitHub repository — **not yet created, no remote configured**
+- [ ] Five-minute pitch video recorded
+- [ ] Application form submitted (track: **Open Track**)
