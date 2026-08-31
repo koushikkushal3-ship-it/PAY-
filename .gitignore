@@ -7,3 +7,4 @@ build/
 key*.txt
 *.key
 eval-results.json
+.vite/
