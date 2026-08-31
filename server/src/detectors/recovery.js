@@ -6,27 +6,54 @@ import {
 } from '../reasoner/promptsModules.js';
 
 /**
+ * Queue thresholds.
+ *
+ * The governing rule: a case reaches a human only when automated handling has
+ * already failed AND an analyst's judgment changes the outcome. Everything
+ * else is dunning, and dunning does not need a person.
+ *
+ * That excludes two decline reasons entirely:
+ *  - insufficient_funds: a scheduled retry handles this, no judgment involved.
+ *  - 3ds_failed: the buyer re-authenticates, again no judgment involved.
+ *
+ * What is left is `risk_threshold` — the platform's OWN decision to decline,
+ * which is the decision that can be wrong. That is the false-decline problem
+ * this module exists for, and it is the only decline type worth an analyst.
+ */
+const DECLINE_REASON = 'risk_threshold';
+// Above this score the decline was probably right; retrying it is how a
+// platform helps commit fraud, so it must not be queued as recoverable.
+const MAX_RISK_SCORE = 0.6;
+// Below this value an analyst's time costs more than the sale is worth.
+const MIN_TXN_AMOUNT = 10000;
+// Under two weeks, automated reminders are still running their course.
+const MIN_DAYS_OVERDUE = 14;
+
+/**
  * Two leak types feed one queue:
- *  - transactions declined at the risk threshold (the false-decline problem)
- *  - B2B invoices past their due date
+ *  - transactions the platform itself declined at the risk threshold
+ *  - B2B invoices overdue past the automated reminder window
  */
 export async function detect() {
+  const cutoff = new Date(Date.now() - MIN_DAYS_OVERDUE * 86400000)
+    .toISOString().slice(0, 10);
+
   const [{ data: txns, error: tErr }, { data: invoices, error: iErr }] = await Promise.all([
     db.from('transactions')
       .select('id, merchant_id, amount, status, decline_reason, risk_score')
-      .in('status', ['declined', 'borderline']),
+      .in('status', ['declined', 'borderline'])
+      .eq('decline_reason', DECLINE_REASON)
+      .lt('risk_score', MAX_RISK_SCORE)
+      .gte('amount', MIN_TXN_AMOUNT),
     db.from('invoices')
       .select('id, merchant_id, buyer, amount, due_date, status')
-      .eq('status', 'overdue'),
+      .eq('status', 'overdue')
+      .lt('due_date', cutoff),
   ]);
   if (tErr) throw new Error(tErr.message);
   if (iErr) throw new Error(iErr.message);
 
-  // Only declines that look like a risk-threshold call are worth an analyst's
-  // time. An issuer decline is the bank's decision, not something to recover.
-  const recoverable = txns.filter(
-    (t) => t.decline_reason !== 'issuer_declined' && Number(t.risk_score) < 0.75
-  );
+  const recoverable = txns;
 
   const existing = await existingEntityIds('recovery');
   const merchants = await merchantNames([
