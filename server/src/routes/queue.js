@@ -1,17 +1,13 @@
 import { Router } from 'express';
 import { db } from '../lib/db.js';
-import { detectRiskCases } from '../detectors/risk.js';
+import { MODULES, MODULE_KEYS, getModule, detectAll } from '../detectors/index.js';
 
 export const queueRouter = Router();
-
-const MODULES = ['risk', 'recovery', 'agent_audit', 'finance'];
 
 queueRouter.get('/queue', async (req, res, next) => {
   try {
     const module = req.query.module ?? 'risk';
-    if (!MODULES.includes(module)) {
-      return res.status(400).json({ error: `module must be one of ${MODULES.join(', ')}` });
-    }
+    getModule(module); // validates, throws 400 on an unknown key
     const status = req.query.status ?? 'open';
 
     const { data, error } = await db
@@ -24,11 +20,12 @@ queueRouter.get('/queue', async (req, res, next) => {
 
     res.json({
       module,
+      label: MODULES[module].label,
       count: data.length,
       cases: data.map((c) => ({
         ...c,
-        // Only the summary fields the list needs; the full verdict comes from
-        // the case detail endpoint.
+        // List view needs the headline only; the full verdict comes from the
+        // case detail endpoint.
         verdict: c.verdict
           ? {
               verdict: c.verdict.verdict,
@@ -48,26 +45,34 @@ queueRouter.get('/queue/summary', async (_req, res, next) => {
     const { data, error } = await db.from('review_queue').select('module, status, verdict');
     if (error) throw new Error(error.message);
 
-    const summary = MODULES.map((m) => {
-      const rows = data.filter((r) => r.module === m);
-      return {
-        module: m,
-        open: rows.filter((r) => r.status === 'open').length,
-        actioned: rows.filter((r) => r.status === 'actioned').length,
-        scored: rows.filter((r) => r.verdict).length,
-      };
+    res.json({
+      summary: MODULE_KEYS.map((m) => {
+        const rows = data.filter((r) => r.module === m);
+        return {
+          module: m,
+          label: MODULES[m].label,
+          open: rows.filter((r) => r.status === 'open').length,
+          actioned: rows.filter((r) => r.status === 'actioned').length,
+          scored: rows.filter((r) => r.verdict).length,
+        };
+      }),
     });
-    res.json({ summary });
   } catch (err) {
     next(err);
   }
 });
 
-// Runs the detectors that populate the queue. Day 1: risk only.
-queueRouter.post('/detect/risk', async (_req, res, next) => {
+queueRouter.post('/detect', async (_req, res, next) => {
   try {
-    const result = await detectRiskCases();
-    res.json(result);
+    res.json({ created: await detectAll() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+queueRouter.post('/detect/:module', async (req, res, next) => {
+  try {
+    res.json(await getModule(req.params.module).detect());
   } catch (err) {
     next(err);
   }

@@ -35,6 +35,33 @@ const CATEGORIES = {
   jewellery: { mcc: '5944', benchmark: 0.011 },
 };
 
+// Expected GST rate per item category. The finance detector flags invoices
+// where the applied rate does not match, which is a real filing exposure.
+const GST_RULES = {
+  'packaged food': { rate: 5, hsn: '2106' },
+  'apparel': { rate: 12, hsn: '6109' },
+  'consumer electronics': { rate: 18, hsn: '8517' },
+  'software services': { rate: 18, hsn: '9983' },
+  'books': { rate: 0, hsn: '4901' },
+  'jewellery': { rate: 3, hsn: '7113' },
+  'luxury goods': { rate: 28, hsn: '7117' },
+};
+
+const BUYERS = [
+  'Sundaram Retail Pvt Ltd', 'Orbit Logistics', 'Hexa Foods', 'Nandi Textiles',
+  'Prakash Distributors', 'Lumen Interiors', 'Sagar Wholesale', 'Trident Corp',
+];
+
+// SKUs an AI shopping agent can request a price for.
+const SKUS = [
+  { sku: 'HDPHN-200', list: 2499 },
+  { sku: 'LAPSTAND-11', list: 1299 },
+  { sku: 'COFFEE-1KG', list: 899 },
+  { sku: 'DESKLAMP-07', list: 1799 },
+  { sku: 'BACKPACK-32L', list: 3299 },
+  { sku: 'KEYBOARD-M4', list: 4599 },
+];
+
 const NAMES_LEGIT = [
   'Kavya Handlooms', 'Nirvaan Electronics', 'Bluepeak Travel', 'Studyloop Academy',
   'Trailmark SaaS', 'Ghar Grocers', 'Mithila Jewels', 'Verdant Organics',
@@ -518,7 +545,77 @@ export function buildDataset({ perClass = 22 } = {}) {
     };
   });
 
-  return { merchants, flags, transactions, settlements };
+  // ---- B2B invoices: unpaid receivables + GST bucket errors ----
+  const invoices = [];
+  const gstCategories = Object.keys(GST_RULES);
+  cases.forEach((c) => {
+    const count = Math.round(between(0, 4));
+    for (let k = 0; k < count; k += 1) {
+      const category = pick(gstCategories);
+      const correct = GST_RULES[category];
+      // ~18% carry a wrong rate — the thing the finance detector must catch.
+      const wrongRate = rnd() < 0.18;
+      const applied = wrongRate
+        ? pick(Object.values(GST_RULES).map((g) => g.rate).filter((r) => r !== correct.rate))
+        : correct.rate;
+
+      const dueInDays = between(-75, 40); // negative = already overdue
+      const overdue = dueInDays < 0;
+      const paid = !overdue && rnd() < 0.55;
+
+      invoices.push({
+        id: randomUUID(),
+        merchant_id: c.merchant.id,
+        buyer: pick(BUYERS),
+        amount: Math.round(between(25000, 900000)),
+        gst_rate_applied: applied,
+        hsn_code: correct.hsn,
+        item_category: category,
+        due_date: new Date(Date.now() + dueInDays * 86400000).toISOString().slice(0, 10),
+        paid_at: paid ? daysAgo(between(1, 20)) : null,
+        status: paid ? 'paid' : overdue ? 'overdue' : 'unpaid',
+      });
+    }
+  });
+
+  // ---- Agent shopping sessions: fair vs discriminatory pricing ----
+  // Two SKUs are deliberately quoted at materially different prices with no
+  // discount rule behind the difference; the rest vary only where a named rule
+  // explains it.
+  const unfairSkus = new Set([SKUS[0].sku, SKUS[3].sku]);
+  const agentSessions = [];
+  const agentQuotes = [];
+  for (let i = 0; i < 26; i += 1) {
+    const session = {
+      id: randomUUID(),
+      agent_id: `agent-${pick(['alpha', 'beta', 'gamma', 'delta'])}`,
+      buyer_ref: `buyer-${Math.round(between(1000, 9999))}`,
+      started_at: daysAgo(between(0.2, 21)),
+    };
+    agentSessions.push(session);
+
+    for (const item of SKUS.filter(() => rnd() < 0.5)) {
+      const unfair = unfairSkus.has(item.sku);
+      // Fair: either list price, or a discount with a rule naming the reason.
+      // Unfair: price moves per session with nothing justifying it.
+      const hasRule = !unfair && rnd() < 0.4;
+      const factor = unfair
+        ? between(0.78, 1.32)
+        : hasRule ? between(0.85, 0.95) : 1;
+
+      agentQuotes.push({
+        id: randomUUID(),
+        session_id: session.id,
+        sku: item.sku,
+        quoted_price: Math.round(item.list * factor),
+        list_price: item.list,
+        discount_rule: hasRule ? pick(['BULK10', 'LOYALTY5', 'FESTIVE15']) : null,
+        quoted_at: session.started_at,
+      });
+    }
+  }
+
+  return { merchants, flags, transactions, settlements, invoices, agentSessions, agentQuotes };
 }
 
 export const WIPE_ORDER = [
@@ -545,6 +642,9 @@ async function main() {
     ['merchant_flags', data.flags],
     ['transactions', data.transactions],
     ['settlements', data.settlements],
+    ['invoices', data.invoices],
+    ['agent_sessions', data.agentSessions],
+    ['agent_quotes', data.agentQuotes],
   ]) {
     const { error } = await db.from(table).insert(rows);
     if (error) throw new Error(`${table} insert failed: ${error.message}`);
@@ -554,7 +654,8 @@ async function main() {
   summarise(data);
 }
 
-export function summarise({ merchants, flags, transactions, settlements }) {
+export function summarise(d) {
+  const { merchants, flags, transactions, settlements, invoices = [], agentQuotes = [] } = d;
   const holdout = flags.filter((f) => f.is_holdout).length;
   console.log('');
   console.log('Seed complete.');
@@ -563,6 +664,8 @@ export function summarise({ merchants, flags, transactions, settlements }) {
   console.log(`  ground truth  ${flags.filter((f) => f.ground_truth === 'genuine_risk').length} genuine_risk, ${flags.filter((f) => f.ground_truth === 'false_positive').length} false_positive`);
   console.log(`  transactions  ${transactions.length}`);
   console.log(`  settlements   ${settlements.length}`);
+  console.log(`  invoices      ${invoices.length}  (${invoices.filter((i) => i.status === 'overdue').length} overdue)`);
+  console.log(`  agent quotes  ${agentQuotes.length}`);
 }
 
 // Only run against the database when invoked directly.

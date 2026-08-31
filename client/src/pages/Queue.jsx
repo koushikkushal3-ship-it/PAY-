@@ -1,14 +1,21 @@
 import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api, inr } from '../lib/api.js';
-import { Card, Empty, VerdictBadge, ActionBadge } from '../components/Bits.jsx';
+import { Card, Empty, ActionBadge } from '../components/Bits.jsx';
 
-const TITLES = {
-  risk: 'Freeze & reserve appeals',
-  recovery: 'Revenue recovery',
-  agent_audit: 'Agent pricing audit',
-  finance: 'Finance exceptions',
-};
+const NEGATIVE = new Set(['genuine_risk', 'unfair_pricing', 'exception_confirmed']);
+
+function VerdictCell({ v }) {
+  if (!v) return <span className="text-xs text-slate-600">not scored</span>;
+  const bad = NEGATIVE.has(v.verdict);
+  return (
+    <span className={`rounded px-2 py-0.5 text-xs ${
+      bad ? 'bg-rose-950 text-rose-300' : 'bg-emerald-950 text-emerald-300'
+    }`}>
+      {v.verdict.replace(/_/g, ' ')}
+    </span>
+  );
+}
 
 export default function Queue() {
   const { module } = useParams();
@@ -23,53 +30,44 @@ export default function Queue() {
       setState({ loading: false, error: err.message });
     }
   }
-
   useEffect(() => { load(); }, [module]);
 
   async function populate() {
     setBusy(true);
-    try {
-      await api.detectRisk();
-      await load();
-    } catch (err) {
-      setState((s) => ({ ...s, error: err.message }));
-    } finally {
-      setBusy(false);
-    }
+    try { await api.detect(module); await load(); }
+    catch (err) { setState((s) => ({ ...s, error: err.message })); }
+    finally { setBusy(false); }
   }
 
   if (state.loading) return <Empty>Loading…</Empty>;
   if (state.error) return <Empty><span className="text-rose-400">{state.error}</span></Empty>;
 
-  const cases = state.data.cases;
+  const { cases, label } = state.data;
+  // Risk, recovery and finance rank by rupees at stake. Agent audit ranks by
+  // an unexplained-spread score, so it must not be rendered as currency.
+  const ranksByMoney = module !== 'agent_audit';
 
   return (
     <Card
-      title={`${TITLES[module] ?? module} — ${cases.length} open`}
+      title={`${label} — ${cases.length} open`}
       right={
-        module === 'risk' ? (
-          <button
-            onClick={populate}
-            disabled={busy}
-            className="rounded bg-slate-700 px-3 py-1 text-xs hover:bg-slate-600 disabled:opacity-50"
-          >
-            {busy ? 'Detecting…' : 'Run detector'}
-          </button>
-        ) : null
+        <button
+          onClick={populate}
+          disabled={busy}
+          className="rounded bg-slate-700 px-3 py-1 text-xs hover:bg-slate-600 disabled:opacity-50"
+        >
+          {busy ? 'Detecting…' : 'Run detector'}
+        </button>
       }
     >
       {cases.length === 0 ? (
-        <Empty>
-          {module === 'risk'
-            ? 'No open cases. Seed the database, then press “Run detector”.'
-            : `The ${module.replace('_', ' ')} module lands on day 2.`}
-        </Empty>
+        <Empty>No open cases. Seed the database, then press “Run detector”.</Empty>
       ) : (
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-xs text-slate-500">
               <th className="pb-2 font-normal">Case</th>
-              <th className="pb-2 font-normal">Value at risk</th>
+              <th className="pb-2 font-normal">{ranksByMoney ? 'At stake' : 'Spread score'}</th>
               <th className="pb-2 font-normal">Verdict</th>
               <th className="pb-2 font-normal">Recommended</th>
             </tr>
@@ -82,12 +80,14 @@ export default function Queue() {
                     {c.title}
                   </Link>
                 </td>
-                <td className="py-2.5 pr-4 text-slate-400 tabular-nums">
-                  {inr(c.priority_score * 1000)}
+                <td className="py-2.5 pr-4 tabular-nums text-slate-400">
+                  {ranksByMoney ? inr(c.priority_score * 1000) : c.priority_score}
                 </td>
-                <td className="py-2.5 pr-4"><VerdictBadge verdict={c.verdict?.verdict} /></td>
+                <td className="py-2.5 pr-4"><VerdictCell v={c.verdict} /></td>
                 <td className="py-2.5">
-                  {c.verdict ? <ActionBadge action={c.verdict.recommended_action} /> : '—'}
+                  {c.verdict
+                    ? <ActionBadge action={c.verdict.recommended_action} />
+                    : <span className="text-xs text-slate-600">—</span>}
                 </td>
               </tr>
             ))}

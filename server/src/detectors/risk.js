@@ -122,3 +122,39 @@ function priorityScore(valueAtRisk, flag) {
   const weight = { freeze: 1.25, reserve_hold: 1.0, review: 0.8 }[flag.flag_type] ?? 1;
   return Math.round((valueAtRisk / 1000) * weight);
 }
+
+/** Shared module interface: build the model input and the display panels. */
+export async function loadContext(caseRow) {
+  const { data: flag, error } = await db
+    .from('merchant_flags')
+    .select('id, merchant_id, flag_type, trigger, signal, triggered_at')
+    .eq('id', caseRow.entity_id)
+    .single();
+  if (error) throw new Error(error.message);
+
+  const { data: merchant, error: mErr } = await db
+    .from('merchants').select('*').eq('id', flag.merchant_id).single();
+  if (mErr) throw new Error(mErr.message);
+
+  const [{ data: transactions }, { data: settlements }] = await Promise.all([
+    db.from('transactions').select('*')
+      .eq('merchant_id', merchant.id)
+      .order('created_at', { ascending: false })
+      .limit(12),
+    db.from('settlements').select('*').eq('merchant_id', merchant.id),
+  ]);
+
+  return {
+    input: buildRiskCaseInput({ merchant, flag }),
+    panels: { merchant, transactions: transactions ?? [], settlements: settlements ?? [] },
+  };
+}
+
+export default {
+  key: 'risk',
+  label: 'Freeze & reserve appeals',
+  system: RISK_SYSTEM_PROMPT,
+  schema: riskVerdictSchema,
+  detect: detectRiskCases,
+  loadContext,
+};

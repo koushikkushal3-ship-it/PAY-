@@ -30,12 +30,30 @@ export function VerdictBadge({ verdict }) {
 
 export function ActionBadge({ action }) {
   const tone = {
+    // green: money or access flows back to the merchant
     release: 'bg-emerald-950 text-emerald-300',
+    retry_payment: 'bg-emerald-950 text-emerald-300',
+    schedule_release: 'bg-emerald-950 text-emerald-300',
+    // amber: needs a step before it can resolve
     request_documents: 'bg-amber-950 text-amber-300',
+    step_up_verification: 'bg-amber-950 text-amber-300',
+    contact_buyer: 'bg-amber-950 text-amber-300',
+    require_disclosed_rule: 'bg-amber-950 text-amber-300',
+    correct_filing: 'bg-amber-950 text-amber-300',
+    notify_merchant: 'bg-amber-950 text-amber-300',
+    // red: restriction stays, or the money is gone
     hold: 'bg-rose-950 text-rose-300',
+    write_off: 'bg-rose-950 text-rose-300',
+    block_agent_pricing: 'bg-rose-950 text-rose-300',
+    // violet: handed to a human
     escalate: 'bg-violet-950 text-violet-300',
+    escalate_to_finance: 'bg-violet-950 text-violet-300',
   }[action] ?? 'bg-slate-800 text-slate-300';
-  return <span className={`rounded px-2 py-0.5 text-xs ${tone}`}>{action?.replace('_', ' ')}</span>;
+  return (
+    <span className={`rounded px-2 py-0.5 text-xs ${tone}`}>
+      {action?.replace(/_/g, ' ')}
+    </span>
+  );
 }
 
 export function Field({ label, value }) {
